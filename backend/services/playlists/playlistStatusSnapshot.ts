@@ -11,6 +11,7 @@ import type { DownloadOwnerStatus } from "../downloadJobs/downloadOwnerClient.ts
 import { slskdClient } from "../slskdClient.ts";
 import { flowPlaylistConfig, invalidateFlowPlaylistConfigCache } from "./flowPlaylistConfig.ts";
 import { buildPlaylistTrackIdentity } from "./playlistTracks.ts";
+import { plexPlaylistContentFingerprint } from "./plexSyncState.ts";
 import type { FlowConfig, StaticPlaylist } from "./flowPlaylistConfig.ts";
 import { playlistOperationQueue } from "./playlistOperationQueue.ts";
 import { getPlaylistOperationWorkerStatus } from "./playlistOperationWorker.ts";
@@ -254,6 +255,14 @@ export function getPlaylistStatusSnapshot({ user = null }: { user?: RequestUser 
       trackCount: Math.max(jobTotal, Number(playlist.trackCount || 0)),
       recordHistory: playlist.recordHistory !== false,
       showTrackAvailability: playlist.showTrackAvailability === true,
+      plexSync: playlist.plexSync
+        ? {
+            ...playlist.plexSync,
+            inSync:
+              playlist.plexSync.contentFingerprint ===
+              plexPlaylistContentFingerprint(playlist.name, playlist.tracks),
+          }
+        : null,
       ...getMembershipSummary(playlist),
       importSource: playlist.importSource
         ? {

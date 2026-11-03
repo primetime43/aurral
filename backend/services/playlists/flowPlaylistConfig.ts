@@ -20,6 +20,7 @@ import {
   tracksShareMembership,
   type PlaylistTrackInput,
 } from "./playlistTracks.ts";
+import { normalizePlexPlaylistSyncState, plexPlaylistContentFingerprint } from "./plexSyncState.ts";
 import type { RequestUser } from "../../middleware/requestUser.ts";
 
 type AccessUser = (Pick<RequestUser, "id"> & Partial<Pick<RequestUser, "role">>) | null | undefined;
@@ -99,6 +100,7 @@ interface StoredStaticPlaylist {
   importSource?: StoredImportSource | null;
   recordHistory?: unknown;
   showTrackAvailability?: unknown;
+  plexSync?: unknown;
   importedAt?: unknown;
   createdAt?: unknown;
   tracks?: PlaylistTrackInput[];
@@ -112,6 +114,7 @@ export interface StaticPlaylistUpdates {
   description?: string | null;
   recordHistory?: unknown;
   showTrackAvailability?: unknown;
+  plexSync?: unknown;
   importSource?: StoredImportSource | null;
   tracks?: PlaylistTrackInput[];
 }
@@ -301,6 +304,7 @@ const normalizeStaticPlaylist = (playlist: StoredStaticPlaylist | null | undefin
     return { ...track, membershipId };
   });
   const importSource = normalizeImportSource(playlist?.importSource);
+  const plexSync = normalizePlexPlaylistSyncState(playlist?.plexSync);
   return {
     id: playlist?.id || randomUUID(),
     name: name || "Playlist",
@@ -314,6 +318,7 @@ const normalizeStaticPlaylist = (playlist: StoredStaticPlaylist | null | undefin
     importSource,
     recordHistory: playlist?.recordHistory !== false,
     showTrackAvailability: playlist?.showTrackAvailability === true,
+    plexSync,
     importedAt:
       playlist?.importedAt != null && Number.isFinite(Number(playlist.importedAt))
         ? Number(playlist.importedAt)
@@ -770,6 +775,16 @@ export const flowPlaylistConfig = {
     });
     playlists[index] = next;
     setStaticPlaylists(playlists);
+    if (
+      next.plexSync?.autoSync &&
+      next.ownerUserId != null &&
+      plexPlaylistContentFingerprint(current.name, current.tracks) !==
+        plexPlaylistContentFingerprint(next.name, next.tracks)
+    ) {
+      import("../plexPlaylistSync.ts")
+        .then(({ queuePlexPlaylistAutoSync }) => queuePlexPlaylistAutoSync(next.id))
+        .catch(() => {});
+    }
     return next;
   },
 
@@ -793,6 +808,7 @@ export const flowPlaylistConfig = {
       recordHistory:
         typeof updates?.recordHistory === "boolean" ? updates.recordHistory : current.recordHistory,
       showTrackAvailability: updates?.showTrackAvailability ?? current.showTrackAvailability,
+      plexSync: updates?.plexSync !== undefined ? updates.plexSync : current.plexSync,
       sourceFlowId: updates?.sourceFlowId ?? current.sourceFlowId,
       discoverPresetId: updates?.discoverPresetId ?? current.discoverPresetId,
       importSource:
@@ -814,6 +830,16 @@ export const flowPlaylistConfig = {
     });
     playlists[index] = next;
     setStaticPlaylists(playlists);
+    if (
+      next.plexSync?.autoSync &&
+      next.ownerUserId != null &&
+      plexPlaylistContentFingerprint(current.name, current.tracks) !==
+        plexPlaylistContentFingerprint(next.name, next.tracks)
+    ) {
+      import("../plexPlaylistSync.ts")
+        .then(({ queuePlexPlaylistAutoSync }) => queuePlexPlaylistAutoSync(next.id))
+        .catch(() => {});
+    }
     import("../unifiedSearchService.ts")
       .then(({ clearSearchContextCache }) => clearSearchContextCache())
       .catch(() => {});

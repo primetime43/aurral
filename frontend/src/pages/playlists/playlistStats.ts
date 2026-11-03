@@ -20,6 +20,7 @@ export interface StaticPlaylist {
   recordHistory: boolean;
   showTrackAvailability: boolean;
   importSource: PlaylistStatusSnapshot["sharedPlaylists"][number]["importSource"];
+  plexSync: PlaylistStatusSnapshot["sharedPlaylists"][number]["plexSync"];
   trackEntries: { id: string; identity: string }[];
   trackIdentities: string[];
 }

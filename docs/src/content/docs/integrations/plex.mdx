@@ -12,6 +12,8 @@ Plex is optional. Plex scans the Library folder like any other music folder. To 
 3. If playlists reuse tracks from Lidarr, make sure the Lidarr root folder, such as `/data/music`, is in a Plex music library too.
 4. In the Plex server settings, turn on **Scan my library automatically**, so Plex picks up new files on its own.
 
+If the connected server does not have a music library, Aurral shows **Music library required** in **Settings > Listening > Plex**. An administrator can create one there by entering the Library folder path as Plex sees it. Aurral creates the Plex music library and starts its first scan. With Docker, mount the same host folder into Aurral and Plex, preferably at the same container path.
+
 ## Playlists
 
 Aurral writes an M3U file for each enabled flow and each static playlist to `aurral-weekly-flow/_playlists` in the Library folder. **Settings > Library > Playlist files** shows the folder.
@@ -41,6 +43,18 @@ Plex does not read playlist files from its libraries. [ListPorter](https://githu
 Only servers owned by the signed-in Plex account are offered. If Plex sign-in cannot discover the server, connect manually with the **Server URL**, the name of the **Plex account**, and the **Server owner token**. Plex explains how to find one in [Finding an authentication token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
 
 The owner token can read the history of every account on the server, so each Aurral user can import their own Plex account with it. Aurral imports the music plays of that account, then checks for new plays every hour. Only admins can connect a server. **Disconnect** removes the plays that Aurral imported.
+
+## Sync an Aurral playlist to Plex
+
+After connecting Plex in **Settings > Listening > Plex**:
+
+1. Open one of your Aurral playlists.
+2. Open the playlist actions menu and select **Sync to Plex**.
+3. Aurral creates an audio playlist in Plex from tracks it can confidently match by artist and title.
+
+The playlist page shows whether Plex is **Not synced**, **Up to date**, has **Changes pending**, or contains tracks that Plex could not match. After the first sync, you can turn on **Auto-sync to Plex** from the same menu. Aurral will then update the Plex playlist in the background when you rename the Aurral playlist or add or remove tracks.
+
+Use **Sync again** at any time to replace the Plex playlist contents manually. "Up to date" means the Aurral playlist has not changed since its last successful Plex sync; Aurral does not monitor edits made directly in Plex. Deleting a playlist in Aurral does not delete its Plex copy.
 
 ## Bring a Plex playlist into Aurral
 

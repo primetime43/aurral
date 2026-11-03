@@ -20,6 +20,12 @@ import {
 } from "../services/plexHistoryAuth.ts";
 import { logger } from "../services/logger.ts";
 import { asAppError } from "../../lib/errors.ts";
+import {
+  clearPlexLibraryStatusCache,
+  createPlexMusicLibrary,
+  getPlexMusicLibraryStatus,
+  PlexLibrarySetupError,
+} from "../services/plexLibrarySetup.ts";
 
 const providerParam = v.object({ provider: v.picklist(HISTORY_SERVER_PROVIDERS) });
 const connectBody = v.object({
@@ -33,14 +39,60 @@ const plexOauthConnectBody = v.object({
   serverId: v.string(),
   url: v.string(),
 });
+const plexLibraryBody = v.object({ name: v.string(), folderPath: v.string() });
 
 const queueSync = (userId: number, provider: string) =>
   enqueueSystemTaskJob({ kind: "history-server-sync", userId, provider });
 
 export default new Hono<AppEnv>()
   .basePath("/history-servers")
-  .get("/", requireAuth, requireUserAccount, (c) =>
-    c.json({ servers: listHistoryServers(c.var.user.id) }, 200),
+  .get("/", requireAuth, requireUserAccount, async (c) => {
+    const servers = listHistoryServers(c.var.user.id);
+    let plexMusicLibrary: boolean | null = null;
+    if (servers.some((server) => server.provider === "plex")) {
+      try {
+        plexMusicLibrary = (await getPlexMusicLibraryStatus(c.var.user.id)).hasMusicLibrary;
+      } catch {
+        // A history connection can remain usable even when library management is unavailable.
+      }
+    }
+    return c.json(
+      {
+        servers: servers.map((server) => ({
+          ...server,
+          plexMusicLibrary: server.provider === "plex" ? plexMusicLibrary : null,
+        })),
+      },
+      200,
+    );
+  })
+  .get("/plex/library", requirePermission("accessSettings"), requireUserAccount, async (c) => {
+    try {
+      return c.json(await getPlexMusicLibraryStatus(c.var.user.id, { force: true }), 200);
+    } catch (error) {
+      const failure = asAppError(error);
+      const status = error instanceof PlexLibrarySetupError ? error.status : 502;
+      return c.json({ error: failure?.message || "Could not read Plex libraries" }, status);
+    }
+  })
+  .post(
+    "/plex/library",
+    requirePermission("accessSettings"),
+    requireUserAccount,
+    validate("json", plexLibraryBody),
+    async (c) => {
+      try {
+        return c.json(await createPlexMusicLibrary(c.var.user.id, c.req.valid("json")), 200);
+      } catch (error) {
+        const failure = asAppError(error);
+        const status = error instanceof PlexLibrarySetupError ? error.status : 502;
+        logger.warn("listening", "Could not create Plex music library", {
+          message: failure?.message,
+          status: failure?.response?.status ?? status,
+        });
+        return c.json({ error: failure?.message || "Could not create Plex music library" }, status);
+      }
+    },
   )
   .post("/plex/oauth/start", requirePermission("accessSettings"), requireUserAccount, async (c) => {
     try {
@@ -102,6 +154,7 @@ export default new Hono<AppEnv>()
           ...connection,
           url: url.url,
         });
+        clearPlexLibraryStatusCache(c.var.user.id);
         endPlexHistoryAuth(transactionId);
         queueSync(c.var.user.id, "plex");
         return c.json({ server }, 200);
@@ -147,6 +200,7 @@ export default new Hono<AppEnv>()
           username,
           secret: body.secret?.trim() || null,
         });
+        if (provider === "plex") clearPlexLibraryStatusCache(c.var.user.id);
         queueSync(c.var.user.id, provider);
         return c.json({ server }, 200);
       } catch (error) {
@@ -186,7 +240,9 @@ export default new Hono<AppEnv>()
     requireUserAccount,
     validate("param", providerParam),
     async (c) => {
-      await disconnectHistoryServer(c.var.user.id, c.req.valid("param").provider);
+      const provider = c.req.valid("param").provider;
+      await disconnectHistoryServer(c.var.user.id, provider);
+      if (provider === "plex") clearPlexLibraryStatusCache(c.var.user.id);
       return c.body(null, 204);
     },
   );

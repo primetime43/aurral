@@ -37,6 +37,11 @@ import {
 import { asAppError } from "../../../../lib/errors.ts";
 import { validate } from "../../../middleware/validate.ts";
 import { errorStatus } from "../../shared/errorStatus.ts";
+import {
+  PlexPlaylistSyncError,
+  queuePlexPlaylistAutoSync,
+  syncPlaylistToPlex,
+} from "../../../services/plexPlaylistSync.ts";
 import type { Context } from "hono";
 import type { AppEnv, RequestUser } from "../../../middleware/requestUser.ts";
 
@@ -540,6 +545,73 @@ export default new Hono<AppEnv>()
       );
     }
   })
+  .post("/shared-playlists/:playlistId/plex-sync", requireFlowAccess, async (c) => {
+    try {
+      const playlist = getAccessibleStaticPlaylist(c.var.user, c.req.param("playlistId"));
+      if (!playlist) return c.json({ error: "Playlist not found" }, 404);
+      if (playlist.ownerUserId != null && Number(playlist.ownerUserId) !== Number(c.var.user.id)) {
+        return c.json({ error: "Only the playlist owner can sync it to Plex" }, 403);
+      }
+      const result = await syncPlaylistToPlex({
+        userId: c.var.user.id,
+        name: playlist.name,
+        tracks: playlist.tracks,
+        previous: playlist.plexSync,
+      });
+      flowPlaylistConfig.updateStaticPlaylist(playlist.id, { plexSync: result.state });
+      return c.json(
+        {
+          success: true,
+          created: result.created,
+          matchedTracks: result.matchedTracks,
+          skippedTracks: result.skippedTracks,
+          totalTracks: result.totalTracks,
+          lastSyncedAt: result.state.lastSyncedAt,
+        },
+        200,
+      );
+    } catch (error) {
+      const failure = asAppError(error);
+      const playlist = getAccessibleStaticPlaylist(c.var.user, c.req.param("playlistId"));
+      if (
+        playlist?.plexSync &&
+        (playlist.ownerUserId == null || Number(playlist.ownerUserId) === Number(c.var.user.id))
+      ) {
+        flowPlaylistConfig.updateStaticPlaylist(playlist.id, {
+          plexSync: {
+            ...playlist.plexSync,
+            lastSyncError: failure?.message || "Plex sync failed",
+          },
+        });
+      }
+      const status = error instanceof PlexPlaylistSyncError ? error.status : errorStatus(failure);
+      return c.json(
+        { error: "Failed to sync playlist to Plex", message: failure?.message || "Unknown error" },
+        status,
+      );
+    }
+  })
+  .put(
+    "/shared-playlists/:playlistId/plex-sync/auto",
+    requireFlowAccess,
+    validate("json", enabledInput),
+    async (c) => {
+      const playlist = getAccessibleStaticPlaylist(c.var.user, c.req.param("playlistId"));
+      if (!playlist) return c.json({ error: "Playlist not found" }, 404);
+      if (playlist.ownerUserId != null && Number(playlist.ownerUserId) !== Number(c.var.user.id)) {
+        return c.json({ error: "Only the playlist owner can configure Plex sync" }, 403);
+      }
+      if (!playlist.plexSync) {
+        return c.json({ error: "Sync this playlist to Plex before enabling auto-sync" }, 400);
+      }
+      const { enabled } = c.req.valid("json");
+      flowPlaylistConfig.updateStaticPlaylist(playlist.id, {
+        plexSync: { ...playlist.plexSync, autoSync: enabled },
+      });
+      if (enabled) queuePlexPlaylistAutoSync(playlist.id, 0);
+      return c.json({ success: true, autoSync: enabled }, 200);
+    },
+  )
   .put(
     "/playlists/:playlistId/retry-cycle",
     requireFlowAccess,

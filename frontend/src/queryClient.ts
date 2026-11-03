@@ -255,6 +255,11 @@ export const queryKeys = {
   spotifyHistory: (userId: MaybeId): QueryKey => ["discovery", "spotify-history", userId],
   scrobbleStatus: ["scrobbling", "status"],
   historyServers: (userId: MaybeId): QueryKey => ["history-servers", userId || null],
+  plexMusicLibrary: (userId: MaybeId): QueryKey => [
+    "history-servers",
+    "plex-library",
+    userId || null,
+  ],
   apiKey: ["auth", "api-key"],
   myIdentities: (userId: MaybeId): QueryKey => ["auth", "identities", userId || null],
   manualMissingSearchSources: (jobId: MaybeId, mode: string, playlistId: MaybeId): QueryKey => [

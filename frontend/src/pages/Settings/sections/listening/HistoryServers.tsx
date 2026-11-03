@@ -9,6 +9,7 @@ import { formatDateTime } from "../../../../utils/dateTime.ts";
 import { SettingsInput } from "../../components/SettingsField";
 import { Select } from "../../../../components/Select";
 import { readApiError } from "../../utils/apiError.ts";
+import { ConfirmModal } from "../../../../components/ConfirmModal.tsx";
 import {
   SettingsActions,
   SettingsGroup,
@@ -51,7 +52,7 @@ const FIELDS: Record<
     url: "http://plex:32400",
     username: "Plex account",
     secret: "Server owner token",
-    help: "Imports the plays Plex records for this account.",
+    help: "Connect once to import listening history and sync Aurral playlists to Plex.",
   },
   jellyfin: {
     label: "Jellyfin",
@@ -74,10 +75,16 @@ export function useHistoryServers() {
   });
 }
 
-export function historyServerStatus(server: HistoryServer | undefined): ServiceStatus {
+export function historyServerStatus(
+  provider: HistoryServerProvider,
+  server: HistoryServer | undefined,
+): ServiceStatus {
   if (!server) return { label: "Not set up", tone: "muted" };
   if (server.lastError) return { label: "Sync failed", tone: "error" };
-  return { label: "History" };
+  if (provider === "plex" && server.plexMusicLibrary === false) {
+    return { label: "Music library required", tone: "error" };
+  }
+  return { label: provider === "plex" ? "History + playlists" : "History" };
 }
 
 const pause = (milliseconds: number) =>
@@ -287,6 +294,157 @@ function PlexOAuthConnect({
   );
 }
 
+function PlexMusicLibrarySetup({
+  server,
+  canManage,
+  onUpdated,
+}: {
+  server: HistoryServer;
+  canManage: boolean;
+  onUpdated: () => Promise<unknown>;
+}) {
+  const { user } = useAuth();
+  const { showSuccess, showError } = useToast();
+  const queryClient = useQueryClient();
+  const [libraryName, setLibraryName] = useState("Aurral Music");
+  const [draftPath, setDraftPath] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const status = useQuery({
+    queryKey: queryKeys.plexMusicLibrary(user?.id),
+    queryFn: () => parseResponse(historyServersClient.plex.library.$get()),
+    enabled: canManage,
+    refetchInterval: (query) =>
+      query.state.data?.libraries.some((library) => library.refreshing) ? 3000 : false,
+  });
+  const folderPath = draftPath ?? status.data?.suggestedPath ?? "";
+  const create = useMutation({
+    mutationFn: () =>
+      parseResponse(
+        historyServersClient.plex.library.$post({
+          json: { name: libraryName, folderPath },
+        }),
+      ),
+    onSuccess: async (result) => {
+      setConfirming(false);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.plexMusicLibrary(user?.id) });
+      await onUpdated();
+      showSuccess(
+        result.created
+          ? "Plex music library created. Plex is scanning it now."
+          : "Plex already has a music library.",
+      );
+    },
+    onError: (error) => {
+      setConfirming(false);
+      const failure = readApiError(error);
+      showError(failure.error || failure.message || failure.text || "Couldn't create Plex library");
+    },
+  });
+
+  if (!canManage) {
+    return server.plexMusicLibrary === false ? (
+      <SettingsGroup title="Plex music library">
+        <SettingsNote tone="warning">
+          Plex needs a music library before playlists can be synced. Ask an administrator to set it
+          up.
+        </SettingsNote>
+      </SettingsGroup>
+    ) : null;
+  }
+
+  const libraries = status.data?.libraries || [];
+  return (
+    <>
+      <SettingsGroup
+        title="Plex music library"
+        note={libraries.length ? "Ready for playlist sync" : "Required for playlist sync"}
+      >
+        {status.isPending ? <SettingsNote>Checking Plex libraries…</SettingsNote> : null}
+        {status.isError ? (
+          <SettingsNote tone="warning">
+            Aurral couldn&apos;t check the Plex libraries. Verify the connection and try again.
+          </SettingsNote>
+        ) : null}
+        {libraries.length ? (
+          libraries.map((library) => (
+            <SettingsRow
+              key={library.id}
+              label={library.title}
+              help={
+                library.refreshing
+                  ? "Plex is scanning this library"
+                  : library.locations.join(", ") || "Music library ready"
+              }
+            />
+          ))
+        ) : status.data ? (
+          <>
+            <SettingsNote tone="warning">
+              Plex has no music library. Create one here so Plex can index Aurral&apos;s tracks and
+              receive playlists.
+            </SettingsNote>
+            {status.data.needsSharedMount ? (
+              <SettingsNote tone="warning">
+                Aurral does not have an explicitly configured shared Library folder. If Aurral and
+                Plex use separate containers, mount the same host music folder into both before
+                creating the library.
+              </SettingsNote>
+            ) : null}
+            <SettingsRow label="Library name" htmlFor="plex-library-name">
+              <SettingsInput
+                id="plex-library-name"
+                value={libraryName}
+                onChange={(event) => setLibraryName(event.target.value)}
+              />
+            </SettingsRow>
+            <SettingsRow
+              label="Folder in Plex"
+              htmlFor="plex-library-path"
+              help="Use the absolute path as the Plex server sees it. With Docker, mount the same host folder into Plex and Aurral, ideally at the same path."
+            >
+              <SettingsInput
+                id="plex-library-path"
+                value={folderPath}
+                placeholder="/data/downloads/aurral"
+                onChange={(event) => setDraftPath(event.target.value)}
+              />
+            </SettingsRow>
+            <SettingsActions>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={!libraryName.trim() || !folderPath.trim() || create.isPending}
+                onClick={() => setConfirming(true)}
+              >
+                Create music library
+              </button>
+              <a
+                className="btn btn-ghost btn-sm"
+                href="https://support.plex.tv/articles/200288926-creating-libraries/"
+                target="_blank"
+                rel="noreferrer"
+              >
+                Set up manually
+              </a>
+            </SettingsActions>
+          </>
+        ) : null}
+      </SettingsGroup>
+      <ConfirmModal
+        open={confirming}
+        title="Create Plex music library?"
+        body={`Aurral will create “${libraryName.trim() || "Aurral Music"}” in Plex using ${folderPath}. Plex must be able to read this folder.`}
+        confirmLabel="Create library"
+        busyLabel="Creating…"
+        tone="primary"
+        busy={create.isPending}
+        onCancel={() => setConfirming(false)}
+        onConfirm={() => create.mutate()}
+      />
+    </>
+  );
+}
+
 export function HistoryServerDetail({ provider }: { provider: HistoryServerProvider }) {
   const { user, hasPermission } = useAuth();
   const { showSuccess, showError } = useToast();
@@ -346,15 +504,18 @@ export function HistoryServerDetail({ provider }: { provider: HistoryServerProvi
       ) : null}
       {server?.lastError ? <SettingsNote tone="warning">{server.lastError}</SettingsNote> : null}
       <SettingsGroup
-        title="History"
+        title={provider === "plex" ? "Plex connection" : "History"}
         note={
           server
             ? [
+                provider === "plex" ? "Connected for listening history and playlist sync" : null,
                 `${server.plays.toLocaleString()} ${server.plays === 1 ? "play" : "plays"} imported`,
                 server.lastSyncedAt
                   ? `Last synced ${formatDateTime(new Date(server.lastSyncedAt))}`
                   : "Importing",
-              ].join(". ")
+              ]
+                .filter(Boolean)
+                .join(". ")
             : fields.help
         }
       >
@@ -443,6 +604,9 @@ export function HistoryServerDetail({ provider }: { provider: HistoryServerProvi
           <SettingsNote>Only admins can connect {fields.label}.</SettingsNote>
         )}
       </SettingsGroup>
+      {provider === "plex" && server ? (
+        <PlexMusicLibrarySetup server={server} canManage={canConnect} onUpdated={refresh} />
+      ) : null}
     </SettingsPage>
   );
 }

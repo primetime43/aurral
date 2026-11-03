@@ -380,6 +380,14 @@ export function listHistoryServers(userId: number) {
   return selectUserServers.all(userId).map(publicStatus);
 }
 
+export function getHistoryServerConnection(
+  userId: number,
+  provider: HistoryServerProvider,
+): Connection | null {
+  const row = selectServer.get(userId, provider);
+  return row ? connectionOf(row) : null;
+}
+
 export async function connectHistoryServer(
   userId: number,
   provider: HistoryServerProvider,

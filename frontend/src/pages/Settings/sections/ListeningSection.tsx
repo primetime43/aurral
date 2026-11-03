@@ -508,7 +508,7 @@ export function ListeningSection() {
     <SettingsPage title="Listening">
       <SettingsGroup
         title="Services"
-        note="Your history shapes recommendations. Scrobbling sends what you play."
+        note="Your history shapes recommendations. Scrobbling sends what you play. Connected media servers can also receive playlists."
       >
         {scrobbleStatus.isError ? (
           <SettingsNote tone="warning">Couldn&apos;t load your scrobbling services.</SettingsNote>
@@ -550,6 +550,7 @@ export function ListeningSection() {
                 status={
                   historyServers.data
                     ? historyServerStatus(
+                        id,
                         historyServers.data.servers.find((server) => server.provider === id),
                       )
                     : null

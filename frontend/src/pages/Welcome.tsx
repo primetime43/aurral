@@ -37,7 +37,12 @@ function HistoryServerRows() {
       to={`listening/${id}`}
       name={historyServerLabel(id)}
       status={
-        data ? historyServerStatus(data.servers.find((server) => server.provider === id)) : null
+        data
+          ? historyServerStatus(
+              id,
+              data.servers.find((server) => server.provider === id),
+            )
+          : null
       }
     />
   ));

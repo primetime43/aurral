@@ -1,7 +1,7 @@
 import { usePlaylistArtwork } from "../../hooks/usePlaylistArtwork.ts";
 import { useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
-import { Clock, Pencil, RefreshCw, Share, Trash2 } from "../../components/icons";
+import { Clock, Pencil, RefreshCw, Server, Share, Trash2 } from "../../components/icons";
 import { useShareAction } from "../../hooks/useShareAction.ts";
 import { DotLoader } from "../../components/DotLoader";
 import {
@@ -44,6 +44,7 @@ import { useHiddenPlaylistTracks } from "./usePlaylistBulkActions.ts";
 import type { PlaylistStats, PlaylistStatus, StaticPlaylist } from "./playlistStats.ts";
 import { apiFetchWithin, asApiError } from "../../utils/api/core.ts";
 import { getApiErrorText } from "../../utils/api/errors.ts";
+import { formatDateTime } from "../../utils/dateTime.ts";
 
 interface PlaylistDetailProps {
   playlist: StaticPlaylist;
@@ -165,6 +166,10 @@ function PlaylistDetail({ playlist, stats, staticPlaylists, fetchStatus }: Playl
       ? `${countAvailableTracks(tracks)}/${totalTracks} available`
       : formatTrackTotal(totalTracks);
   const owner = playlist.ownerUsername || user?.username || null;
+  const canSyncToPlex =
+    playlist.ownerUserId == null
+      ? user?.role === "admin"
+      : Number(playlist.ownerUserId) === Number(user?.id);
   const syncInterval = importSource?.syncIntervalHours ?? 0;
   const metaParts = [owner, trackLabel];
   if (isSyncable) {
@@ -174,6 +179,35 @@ function PlaylistDetail({ playlist, stats, staticPlaylists, fetchStatus }: Playl
         : `Imported from ${providerLabel}`,
     );
   }
+  const plexSync = playlist.plexSync;
+  const plexSyncLabel =
+    totalTracks === 0
+      ? "Plex: Add tracks before syncing"
+      : !plexSync
+        ? "Plex: Not synced"
+        : plexSync.lastSyncError
+          ? "Plex: Sync failed"
+          : !plexSync.inSync
+            ? "Plex: Changes pending"
+            : plexSync.skippedTracks > 0
+              ? `Plex: ${plexSync.matchedTracks} synced, ${plexSync.skippedTracks} missing`
+              : plexSync.lastSyncedAt
+                ? `Plex: Up to date (${formatDateTime(new Date(plexSync.lastSyncedAt), {
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })})`
+                : "Plex: Up to date";
+  if (canSyncToPlex) metaParts.push(plexSyncLabel);
+  const plexSyncActionLabel =
+    totalTracks === 0
+      ? "Add tracks before syncing"
+      : !plexSync
+        ? "Sync to Plex"
+        : plexSync.inSync
+          ? "Sync again"
+          : "Sync changes to Plex";
 
   const updatePlaylist = (json: InferRequestType<typeof sharedPlaylist.$put>["json"]) =>
     parseResponse(
@@ -231,6 +265,40 @@ function PlaylistDetail({ playlist, stats, staticPlaylists, fetchStatus }: Playl
       showError(getApiErrorMessage(err, "Failed to sync playlist"));
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handlePlexSync = async () => {
+    try {
+      const result = await parseResponse(
+        sharedPlaylist["plex-sync"].$post(
+          { param: { playlistId: encodeURIComponent(playlist.id) } },
+          { fetch: syncFetch },
+        ),
+      );
+      const action = result.created ? "Created" : "Updated";
+      const skipped = result.skippedTracks ? `; ${result.skippedTracks} not found in Plex` : "";
+      showSuccess(
+        `${action} ${playlist.name} in Plex with ${result.matchedTracks} track${result.matchedTracks === 1 ? "" : "s"}${skipped}`,
+      );
+      await fetchStatus();
+    } catch (err) {
+      showError(getApiErrorMessage(err, "Failed to sync playlist to Plex"));
+    }
+  };
+
+  const handlePlexAutoSync = async (enabled: boolean) => {
+    try {
+      await parseResponse(
+        sharedPlaylist["plex-sync"].auto.$put({
+          param: { playlistId: encodeURIComponent(playlist.id) },
+          json: { enabled },
+        }),
+      );
+      showSuccess(enabled ? "Plex auto-sync enabled" : "Plex auto-sync disabled");
+      await fetchStatus();
+    } catch (err) {
+      showError(getApiErrorMessage(err, "Failed to update Plex auto-sync"));
     }
   };
 
@@ -361,6 +429,28 @@ function PlaylistDetail({ playlist, stats, staticPlaylists, fetchStatus }: Playl
                   icon: Pencil,
                   onSelect: () => setEditOpen(true),
                 },
+                ...(canSyncToPlex
+                  ? [
+                      {
+                        id: "plex-sync",
+                        label: plexSyncActionLabel,
+                        icon: Server,
+                        separatorBefore: true,
+                        disabled: totalTracks === 0,
+                        onSelect: handlePlexSync,
+                      },
+                      ...(plexSync
+                        ? [
+                            optionMenuItem({
+                              id: "plex-auto-sync",
+                              label: "Auto-sync to Plex",
+                              checked: plexSync.autoSync === true,
+                              onSelect: () => handlePlexAutoSync(plexSync.autoSync !== true),
+                            }),
+                          ]
+                        : []),
+                    ]
+                  : []),
                 ...(isSyncable
                   ? [
                       {
