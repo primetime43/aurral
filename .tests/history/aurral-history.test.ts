@@ -80,6 +80,7 @@ test("upsertAurralHistory keeps timestamp for unchanged records", async () => {
   });
 
   const [entry] = await getAurralHistoryRequests();
+  assert.ok(entry);
   assert.equal(new Date(entry.requestedAt).getTime(), baseTime - 4000);
 });
 
@@ -284,10 +285,7 @@ test("queued album track jobs open their album, and other library jobs open the 
   recordTrackJobQueued(downloadTracker.getJob(withoutAlbum));
 
   const entries = await getAurralHistoryRequests();
-  assert.equal(
-    entries.find((item) => item.jobId === withAlbum)?.href,
-    `/library/album/${album.id}`,
-  );
+  assert.equal(entries.find((item) => item.jobId === withAlbum)?.href, `/album/${albumMbid}`);
   assert.equal(
     entries.find((item) => item.jobId === withoutAlbum)?.href,
     "/playlists?selected=library",
@@ -306,7 +304,7 @@ test("queued album track jobs open their album, and other library jobs open the 
   const upgrade = (await getAurralHistoryRequests()).find(
     (item) => item.jobId === "upgrade-of-one",
   );
-  assert.equal(upgrade?.href, `/library/album/${album.id}`);
+  assert.equal(upgrade?.href, `/album/${albumMbid}`);
 });
 
 test("a quality upgrade stays marked as one from queued to its result", async () => {
@@ -707,6 +705,7 @@ test("a history entry with an unreadable field keeps the rest of its details", a
   );
 
   const [entry] = await getAurralHistoryRequests();
+  assert.ok(entry);
 
   assert.equal(entry.trackName, "Song");
   assert.equal(entry.artistName, "Artist");

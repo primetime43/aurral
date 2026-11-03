@@ -14,6 +14,7 @@ import {
   getArtistByMbid,
   getAlbumByMbid,
   getAlbumTracksByAlbumMbid,
+  isMetadataNotFoundError,
 } from "../../../services/providers/brainzmashProvider.ts";
 import {
   getLinkedDeezerArtistId,
@@ -79,7 +80,7 @@ export default new Hono<AppEnv>()
         const results = await Promise.allSettled(batch.map((id) => getAlbumByMbid(id, { signal })));
         batch.forEach((id, batchIndex) => {
           const result = results[batchIndex];
-          if (result.status !== "fulfilled") return;
+          if (result?.status !== "fulfilled") return;
           ratings[id] = {
             rating: result.value?.rating || null,
             firstReleaseDate: result.value?.releaseDate || null,
@@ -140,7 +141,12 @@ export default new Hono<AppEnv>()
       logger.error("releaseGroup", `Error in release-group details route for ${mbid}:`, {
         message: failure?.message,
       });
-      return c.json({ error: "Release not found", message: failure?.message }, 404);
+      if (isMetadataNotFoundError(error)) {
+        return c.json({ error: "Release not found", message: failure?.message }, 404);
+      }
+      c.header("Cache-Control", "no-store");
+      c.header("Expires", "0");
+      return c.json({ error: "Metadata unavailable", message: failure?.message }, 502);
     }
   })
   .get("/release-group/:mbid/cover", validate("query", coverQuery), async (c) => {

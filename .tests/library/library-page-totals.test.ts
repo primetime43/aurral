@@ -1,3 +1,4 @@
+import { requireFixture } from "../playlists/fixtures.ts";
 import assert from "node:assert/strict";
 import { test, afterAll } from "vite-plus/test";
 import Database from "better-sqlite3";
@@ -109,4 +110,60 @@ test("broad search keeps stable ordering, page boundaries, and playable source f
       }
     }
   }
+});
+
+test("an album track page carries the album's provider id and monitored state", () => {
+  const artist = store.upsertLibraryArtist({
+    identityKey: "summary:artist",
+    name: "Summary Artist",
+    metadata: { id: 41, monitored: true },
+  });
+  const album = store.upsertLibraryAlbum({
+    identityKey: "summary:album",
+    artistId: artist.id,
+    title: "Summary Album",
+    metadata: { id: 512, monitored: true, monitor: "all" },
+  });
+  const track = store.upsertLibraryTrack({ identityKey: "summary:track", title: "Summary Track" });
+  store.linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
+
+  const page = getLibraryPage({ kind: "tracks", albumId: album.id, availableOnly: false });
+  const summaryAlbum = requireFixture(page.albums[0]);
+  assert.equal(summaryAlbum.canonicalId, String(album.id));
+  assert.equal(summaryAlbum.providerId, 512);
+  assert.equal(summaryAlbum.monitored, true);
+  assert.equal(summaryAlbum.monitorOption, "all");
+  const summaryArtist = requireFixture(page.artists[0]);
+  assert.equal("providerId" in summaryArtist && summaryArtist.providerId, 41);
+  assert.equal("monitored" in summaryArtist && summaryArtist.monitored, true);
+});
+
+test("an album track page opens by its release-group MBID, and an unknown MBID finds nothing", () => {
+  const releaseGroupMbid = "c3333333-3333-4333-8333-333333333301";
+  const artist = store.upsertLibraryArtist({ identityKey: "rg:artist", name: "RG Artist" });
+  const album = store.upsertLibraryAlbum({
+    identityKey: `release-group:${releaseGroupMbid}`,
+    artistId: artist.id,
+    title: "RG Album",
+    releaseGroupMbid,
+  });
+  const track = store.upsertLibraryTrack({ identityKey: "rg:track", title: "RG Track" });
+  store.linkLibraryAlbumTrack({ albumId: album.id, trackId: track.id });
+
+  const page = getLibraryPage({ kind: "tracks", albumId: releaseGroupMbid, availableOnly: false });
+  assert.deepEqual(
+    page.albums.map((entry) => entry.canonicalId),
+    [String(album.id)],
+  );
+  assert.deepEqual(
+    page.tracks.map((entry) => entry.title),
+    ["RG Track"],
+  );
+  const missing = getLibraryPage({
+    kind: "tracks",
+    albumId: "c3333333-3333-4333-8333-333333333399",
+    availableOnly: false,
+  });
+  assert.equal(missing.albums.length, 0);
+  assert.equal(missing.tracks.length, 0);
 });

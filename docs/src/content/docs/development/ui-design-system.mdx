@@ -61,6 +61,8 @@ The dark theme uses a true black page. The sidebar and top bar sit one step ligh
 
 Everything that floats above the page shares one surface: `--aurral-surface-popover`, a `--aurral-border-overlay` border, and `--aurral-shadow-popover`. Floating surfaces are solid, and nothing blurs the page behind them. Modals sit on `--aurral-scrim`.
 
+Pages with an artwork wash swap `--aurral-surface-raised`, `--aurral-surface-hover`, and `--aurral-surface-selected` for see-through versions, so controls pick up the color beneath them. The shared floating rules reset them to solid values. A control that sits on artwork uses the solid `--aurral-overlay-raised` and `--aurral-overlay-hover` instead.
+
 Two shared rules near the end of `frontend/src/index.css` apply the surface. One covers menus, popovers, suggestions, and toasts, and the other covers modals. Add a new floating element to the matching selector list instead of setting its border, radius, background, or shadow in its own rule. The shared rules come later in the file, so those values would never show. Tooltips set the surface themselves and use `--aurral-radius-sm`. Build a new menu on an existing menu class such as `.artist-options-menu` when you can. It already has the surface and opens as a bottom sheet on phones.
 
 Fields sit one step above whatever holds them, so an input reads the same on the page, in a settings card, or in a modal. Use `Select` from `components/Select.tsx` for every dropdown instead of a native `<select>`. It opens on the menu surface, and as a bottom sheet on phones.
@@ -114,7 +116,9 @@ Build every section from the primitives in `pages/Settings/SettingsLayout.tsx`:
 - `SettingsServiceRow` shows a service name, a short status (**On**, **Off**, **Not set up**, or **Needs setup**), and a chevron. It opens the service's detail in the same pane. Do not add card grids or a modal per service.
 - Use a table only for a few short columns. When each item has a description or several values, use two-line rows like **Status > Tasks**: name and description on the left, schedule and result on the right.
 
-Account sections show for everyone. Server sections show only to people who can manage the server, and their data never loads for anyone else. Changes save automatically. A detail that edits a draft, such as a webhook, saves with its own button.
+Larger editors that are not settings use the same frame: `SettingsShell` for the modal and its list, and `SettingsPane` for the bar and content column. The flow editor lists flows, and playlist import lists sources. An action that moves forward, such as **Import**, sits in the bar.
+
+Account sections show for everyone. Server sections show only to people who can manage the server, and their data never loads for anyone else. Changes save automatically. Toggles, selects, and actions save at once. A text field saves when focus leaves it, so a half-typed value never saves. Queue a save through `afterTextEntry` in `utils/afterTextEntry.ts` to get this rule. A detail that edits a draft, such as a webhook, saves with its own button.
 
 ## Motion
 
