@@ -12,6 +12,12 @@ import {
   HistoryServerError,
   listHistoryServers,
 } from "../services/historyServers.ts";
+import {
+  completePlexHistoryAuth,
+  endPlexHistoryAuth,
+  getPlexHistoryConnection,
+  startPlexHistoryAuth,
+} from "../services/plexHistoryAuth.ts";
 import { logger } from "../services/logger.ts";
 import { asAppError } from "../../lib/errors.ts";
 
@@ -21,6 +27,12 @@ const connectBody = v.object({
   username: v.string(),
   secret: v.optional(v.string()),
 });
+const plexOauthTransactionBody = v.object({ transactionId: v.string() });
+const plexOauthConnectBody = v.object({
+  transactionId: v.string(),
+  serverId: v.string(),
+  url: v.string(),
+});
 
 const queueSync = (userId: number, provider: string) =>
   enqueueSystemTaskJob({ kind: "history-server-sync", userId, provider });
@@ -29,6 +41,92 @@ export default new Hono<AppEnv>()
   .basePath("/history-servers")
   .get("/", requireAuth, requireUserAccount, (c) =>
     c.json({ servers: listHistoryServers(c.var.user.id) }, 200),
+  )
+  .post("/plex/oauth/start", requirePermission("accessSettings"), requireUserAccount, async (c) => {
+    try {
+      return c.json(await startPlexHistoryAuth(c.var.user.id), 200);
+    } catch (error) {
+      const failure = asAppError(error);
+      logger.warn("listening", "Could not start Plex sign-in", {
+        message: failure?.message,
+        status: failure?.response?.status ?? null,
+      });
+      return c.json({ error: "Couldn't start Plex sign-in" }, 502);
+    }
+  })
+  .post(
+    "/plex/oauth/complete",
+    requirePermission("accessSettings"),
+    requireUserAccount,
+    validate("json", plexOauthTransactionBody),
+    async (c) => {
+      try {
+        return c.json(
+          await completePlexHistoryAuth(c.var.user.id, c.req.valid("json").transactionId),
+          200,
+        );
+      } catch (error) {
+        const failure = asAppError(error);
+        const status = Number(failure?.status) === 400 ? 400 : 502;
+        logger.warn("listening", "Could not complete Plex sign-in", {
+          message: failure?.message,
+          status: failure?.response?.status ?? failure?.status ?? null,
+        });
+        return c.json(
+          {
+            error:
+              status === 400 ? failure?.message || "Plex sign-in expired" : "Plex sign-in failed",
+          },
+          status,
+        );
+      }
+    },
+  )
+  .post(
+    "/plex/oauth/connect",
+    requirePermission("accessSettings"),
+    requireUserAccount,
+    validate("json", plexOauthConnectBody),
+    async (c) => {
+      const { transactionId, serverId, url: selectedUrl } = c.req.valid("json");
+      try {
+        const connection = getPlexHistoryConnection(
+          c.var.user.id,
+          transactionId,
+          serverId,
+          selectedUrl,
+        );
+        const url = validateExternalUrl(connection.url);
+        if (!url.valid) return c.json({ error: url.error }, 400);
+        const server = await connectHistoryServer(c.var.user.id, "plex", {
+          ...connection,
+          url: url.url,
+        });
+        endPlexHistoryAuth(transactionId);
+        queueSync(c.var.user.id, "plex");
+        return c.json({ server }, 200);
+      } catch (error) {
+        if (error instanceof HistoryServerError) return c.json({ error: error.message }, 400);
+        const failure = asAppError(error);
+        if (Number(failure?.status) === 400) {
+          return c.json({ error: failure?.message || "Invalid Plex connection" }, 400);
+        }
+        logger.warn("listening", "Could not connect the Plex history server", {
+          message: failure?.message,
+          status: failure?.response?.status ?? null,
+        });
+        const status = Number(failure?.response?.status);
+        return c.json(
+          {
+            error:
+              status === 401 || status === 403
+                ? "Plex rejected that login"
+                : "Couldn't reach the Plex server",
+          },
+          400,
+        );
+      }
+    },
   )
   .put(
     "/:provider",

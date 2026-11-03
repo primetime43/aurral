@@ -9,7 +9,13 @@ import type { HistoryServersRow } from "../db/rows.ts";
 export const HISTORY_SERVER_PROVIDERS = ["navidrome", "plex", "jellyfin"] as const;
 export type HistoryServerProvider = (typeof HISTORY_SERVER_PROVIDERS)[number];
 
-type Connection = { url: string; username: string; secret: string; accountId: string | null };
+type Connection = {
+  url: string;
+  username: string;
+  secret: string;
+  accountId: string | null;
+  clientId: string | null;
+};
 export type ImportedPlay = {
   id: string;
   trackId: string;
@@ -111,17 +117,17 @@ const navidrome: Provider = {
   },
 };
 
-const plexHeaders = (token: string) => ({
+const plexHeaders = (token: string, clientId = "aurral") => ({
   Accept: "application/json",
   "X-Plex-Token": token,
-  "X-Plex-Client-Identifier": "aurral",
+  "X-Plex-Client-Identifier": clientId,
   "X-Plex-Product": "Aurral",
 });
 
 const plex: Provider = {
-  async connect({ url, username, secret }) {
+  async connect({ url, username, secret, clientId }) {
     const { data } = await axios.get(`${url}/accounts`, {
-      headers: plexHeaders(secret),
+      headers: plexHeaders(secret, clientId || undefined),
       timeout: TIMEOUT_MS,
     });
     const accounts = list(object(object(data).MediaContainer).Account).map(object);
@@ -130,7 +136,7 @@ const plex: Provider = {
       throw new HistoryServerError(`Plex has no account named ${username}`);
     return { accountId: String(account.id) };
   },
-  async *read({ url, secret, accountId }, since, until) {
+  async *read({ url, secret, accountId, clientId }, since, until) {
     for (let start = 0; ; start += PAGE_SIZE) {
       const { data } = await axios.get(`${url}/status/sessions/history/all`, {
         params: {
@@ -141,7 +147,7 @@ const plex: Provider = {
           "X-Plex-Container-Start": start,
           "X-Plex-Container-Size": PAGE_SIZE,
         },
-        headers: plexHeaders(secret),
+        headers: plexHeaders(secret, clientId || undefined),
         timeout: TIMEOUT_MS,
       });
       const container = object(object(data).MediaContainer);
@@ -337,11 +343,26 @@ const insertPlays = db.transaction(
 const secretKey = () => getSettingsEncryptionKey();
 
 function connectionOf(row: HistoryServersRow): Connection {
+  const storedSecret = decryptWithKey(row.secret, secretKey()) || "";
+  let secret = storedSecret;
+  let clientId: string | null = null;
+  if (row.provider === "plex" && storedSecret.startsWith("{")) {
+    try {
+      const parsed: unknown = JSON.parse(storedSecret);
+      if (v.is(v.object({ token: v.string(), clientId: v.string() }), parsed)) {
+        secret = parsed.token;
+        clientId = parsed.clientId;
+      }
+    } catch {
+      // Older and manually entered Plex credentials are stored as a plain token.
+    }
+  }
   return {
     url: row.url,
     username: row.username,
-    secret: decryptWithKey(row.secret, secretKey()) || "",
+    secret,
     accountId: row.account_id,
+    clientId,
   };
 }
 
@@ -362,12 +383,20 @@ export function listHistoryServers(userId: number) {
 export async function connectHistoryServer(
   userId: number,
   provider: HistoryServerProvider,
-  input: { url: string; username: string; secret: string | null },
+  input: { url: string; username: string; secret: string | null; clientId?: string | null },
 ) {
   const existing = selectServer.get(userId, provider);
-  const secret = input.secret || (existing ? connectionOf(existing).secret : "");
+  const existingConnection = existing ? connectionOf(existing) : null;
+  const secret = input.secret || existingConnection?.secret || "";
+  const clientId = input.clientId || existingConnection?.clientId || null;
   if (!secret) throw new HistoryServerError("Enter the password, token, or API key");
-  const connection = { url: input.url, username: input.username, secret, accountId: null };
+  const connection = {
+    url: input.url,
+    username: input.username,
+    secret,
+    accountId: null,
+    clientId,
+  };
   const { accountId } = await PROVIDERS[provider].connect(connection);
   const removed = db.transaction(() => {
     const current = selectServer.get(userId, provider);
@@ -381,7 +410,10 @@ export async function connectHistoryServer(
       provider,
       input.url,
       input.username,
-      encryptWithKey(secret, secretKey()) || "",
+      encryptWithKey(
+        provider === "plex" && clientId ? JSON.stringify({ token: secret, clientId }) : secret,
+        secretKey(),
+      ) || "",
       accountId,
       sameAccount ? current.connected_at : Date.now(),
     );

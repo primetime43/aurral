@@ -34,10 +34,11 @@ Plex does not read playlist files from its libraries. [ListPorter](https://githu
 
 ## Listening history
 
-1. Find your Plex token. Plex explains how in [Finding an authentication token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/). Use the token of the server owner.
-2. In Aurral, open **Settings > Listening > Plex**.
-3. Enter the **Server URL**, the name of your **Plex account**, and the **Server owner token**.
-4. Select **Connect Plex**.
+1. In Aurral, open **Settings > Listening > Plex**.
+2. Select **Sign in with Plex** and approve Aurral in the Plex tab.
+3. Choose the Plex server and the connection that Aurral can reach, then select **Connect server**.
+
+Only servers owned by the signed-in Plex account are offered. If Plex sign-in cannot discover the server, connect manually with the **Server URL**, the name of the **Plex account**, and the **Server owner token**. Plex explains how to find one in [Finding an authentication token](https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/).
 
 The owner token can read the history of every account on the server, so each Aurral user can import their own Plex account with it. Aurral imports the music plays of that account, then checks for new plays every hour. Only admins can connect a server. **Disconnect** removes the plays that Aurral imported.
 
